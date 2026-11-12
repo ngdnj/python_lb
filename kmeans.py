@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import random
+import argparse
 from dataclasses import dataclass
 from numbers import Real
 from typing import Iterable
@@ -172,12 +173,153 @@ def make_blobs(
     return points, [label for _, label in samples]
 
 
+class KMeans:
+    """Обучаемая модель k-средних с интерфейсом fit/predict."""
+
+    def __init__(self, n_clusters: int = 3, max_iter: int = 100,
+                 seed: int | None = None):
+        _positive_int(n_clusters, "n_clusters")
+        _positive_int(max_iter, "max_iter")
+        self.n_clusters = n_clusters
+        self.max_iter = max_iter
+        self.seed = seed
+        self.cluster_centers_: tuple[Point, ...] | None = None
+        self.labels_: tuple[int, ...] | None = None
+        self.inertia_: float | None = None
+        self.n_iter_: int | None = None
+
+    def _init_centroids(self, X: list[Point]) -> list[Point]:
+        if self.n_clusters > len(X):
+            raise ValueError("n_clusters не может превышать число точек")
+        return random.Random(self.seed).sample(X, self.n_clusters)
+
+    def _assign(self, X: list[Point]) -> tuple[int, ...]:
+        if self.cluster_centers_ is None:
+            raise RuntimeError("Сначала вызовите fit")
+        return tuple(min(range(self.n_clusters),
+                         key=lambda j: _distance_squared(p, self.cluster_centers_[j]))
+                     for p in X)
+
+    def _update(self, X: list[Point], labels: tuple[int, ...]) -> tuple[Point, ...]:
+        assert self.cluster_centers_ is not None
+        groups = [[p for p, label in zip(X, labels) if label == j]
+                  for j in range(self.n_clusters)]
+        dimension = len(X[0])
+        return tuple(
+            tuple(math.fsum(p[d] / len(group) for p in group)
+                  for d in range(dimension)) if group else self.cluster_centers_[j]
+            for j, group in enumerate(groups)
+        )
+
+    def fit(self, X: Iterable[Iterable[float]]) -> tuple[int, ...]:
+        points = _points(X)
+        self.cluster_centers_ = tuple(self._init_centroids(points))
+        for iteration in range(1, self.max_iter + 1):
+            labels = self._assign(points)
+            updated = self._update(points, labels)
+            shift = max(math.sqrt(_distance_squared(a, b))
+                        for a, b in zip(self.cluster_centers_, updated))
+            self.cluster_centers_ = updated
+            if shift <= 1e-4:
+                break
+        self.labels_ = self._assign(points)
+        self.inertia_ = self.inertia(points, self.labels_)
+        self.n_iter_ = iteration
+        return self.labels_
+
+    def predict(self, X: Iterable[Iterable[float]]) -> tuple[int, ...]:
+        points = _points(X)
+        if self.cluster_centers_ is None:
+            raise RuntimeError("Сначала вызовите fit")
+        if len(points[0]) != len(self.cluster_centers_[0]):
+            raise ValueError("Размерность точек не совпадает с обучающими данными")
+        return self._assign(points)
+
+    def inertia(self, X: Iterable[Iterable[float]],
+                labels: Iterable[int]) -> float:
+        points = _points(X)
+        labels = tuple(labels)
+        if self.cluster_centers_ is None:
+            raise RuntimeError("Сначала вызовите fit")
+        if len(points) != len(labels) or any(
+            isinstance(label, bool) or not isinstance(label, int)
+            or not 0 <= label < self.n_clusters for label in labels
+        ):
+            raise ValueError("Нужна метка кластера для каждой точки")
+        try:
+            return math.fsum(_distance_squared(p, self.cluster_centers_[label])
+                             for p, label in zip(points, labels))
+        except OverflowError as exc:
+            raise ValueError("Слишком большие координаты: нормализуйте данные") from exc
+
+
+def plot_clusters(X, labels, centers, *, title="Кластеры k-средних"):
+    """Показывает двумерные точки и центры; требует matplotlib."""
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError as exc:
+        raise RuntimeError("Для графиков установите matplotlib: python -m pip install matplotlib") from exc
+    points = _points(X)
+    if len(points[0]) != 2 or len(points) != len(labels):
+        raise ValueError("Для визуализации нужны двумерные точки и метка на каждую точку")
+    for label in sorted(set(labels)):
+        group = [p for p, value in zip(points, labels) if value == label]
+        plt.scatter([p[0] for p in group], [p[1] for p in group], label=f"Кластер {label}")
+    plt.scatter([c[0] for c in centers], [c[1] for c in centers],
+                marker="X", s=200, c="black", label="Центры")
+    plt.title(title)
+    plt.legend()
+    plt.show()
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Кластеризация методом k-средних")
+    parser.add_argument("--samples", type=int, default=300, help="точек на кластер")
+    parser.add_argument("--k", type=int, default=3, help="число кластеров")
+    parser.add_argument("--iter", type=int, default=100, dest="max_iter")
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--elbow", action="store_true", help="построить график локтя для k=1..10")
+    args = parser.parse_args(argv)
+    if args.samples < 1 or args.k < 1 or args.max_iter < 1:
+        parser.error("--samples, --k и --iter должны быть положительными")
+    centers = [(-5, -5), (0, 5), (5, -5), (-10, 5), (10, 5), (0, -10),
+               (-10, -10), (10, 10), (15, 0), (-15, 0)]
+    if args.k > len(centers):
+        centers.extend((20 * i, 20 * j) for i in range(-args.k, args.k + 1)
+                       for j in range(-args.k, args.k + 1))
+    data, _ = make_blobs(centers[:args.k], args.samples // args.k,
+                         seed=args.seed)
+    remainder = args.samples % args.k
+    if remainder:
+        extra, _ = make_blobs(centers[:remainder], 1, seed=args.seed + 1)
+        data.extend(extra)
+        random.Random(args.seed).shuffle(data)
+    if args.elbow:
+        scores = []
+        for k in range(1, min(10, len(data)) + 1):
+            model = KMeans(k, args.max_iter, args.seed)
+            model.fit(data)
+            scores.append(model.inertia_)
+        try:
+            import matplotlib.pyplot as plt
+        except ImportError as exc:
+            parser.error("для --elbow установите matplotlib: python -m pip install matplotlib")
+        plt.plot(range(1, len(scores) + 1), scores, marker="o")
+        plt.xlabel("Число кластеров k")
+        plt.ylabel("Inertia")
+        plt.title("Метод локтя")
+        plt.xticks(range(1, len(scores) + 1))
+        plt.show()
+        return
+    model = KMeans(args.k, args.max_iter, args.seed)
+    labels = model.fit(data)
+    print(f"Точек: {len(data)}, кластеров: {args.k}")
+    for label in range(args.k):
+        print(f"Кластер {label}: {labels.count(label)} точек")
+    print(f"Inertia: {model.inertia_:.4f}")
+    print(f"Итераций: {model.n_iter_}")
+    plot_clusters(data, labels, model.cluster_centers_)
+
+
 if __name__ == "__main__":
-    data, _ = make_blobs([(-5, -5), (0, 5), (5, -5)], seed=42)
-    result = kmeans(data, k=3, seed=42)
-    print(f"Точек: {len(data)}, кластеров: {len(result.centers)}")
-    for label, center in enumerate(result.centers):
-        print(f"Кластер {label}: центр={tuple(round(x, 3) for x in center)}, "
-              f"точек={result.labels.count(label)}")
-    print(f"Сумма квадратов расстояний: {result.inertia:.4f}")
-    print(f"Итераций: {result.n_iter}, сходимость: {result.converged}")
+    main()

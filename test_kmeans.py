@@ -4,13 +4,12 @@ import copy
 import io
 import math
 import random
-import runpy
 import unittest
 from contextlib import redirect_stdout
 from dataclasses import FrozenInstanceError
-from pathlib import Path
+from unittest.mock import patch
 
-from kmeans import kmeans, make_blobs
+from kmeans import KMeans, kmeans, make_blobs, main
 
 
 # Один набор проверяет общий контракт данных у обеих публичных функций.
@@ -33,11 +32,29 @@ class KMeansTests(unittest.TestCase):
     def test_demo_runs_and_reports_result(self):
         output = io.StringIO()
         with redirect_stdout(output):
-            runpy.run_path(str(Path(__file__).with_name("kmeans.py")),
-                           run_name="__main__")
-        self.assertIn("Точек: 150, кластеров: 3", output.getvalue())
-        self.assertIn("Сумма квадратов расстояний:", output.getvalue())
-        self.assertIn("сходимость: True", output.getvalue())
+            with patch("kmeans.plot_clusters") as plot:
+                main(["--samples", "30", "--k", "3", "--iter", "100", "--seed", "42"])
+        self.assertIn("Точек: 30, кластеров: 3", output.getvalue())
+        self.assertIn("Inertia:", output.getvalue())
+        plot.assert_called_once()
+
+    def test_class_fit_predict_and_inertia(self):
+        data = [(0, 0), (0, 2), (10, 10), (10, 12)]
+        model = KMeans(n_clusters=2, seed=42)
+        labels = model.fit(data)
+        self.assertEqual(partition(labels), {frozenset((0, 1)), frozenset((2, 3))})
+        self.assertEqual(model.predict(data), labels)
+        self.assertAlmostEqual(model.inertia_, 4)
+        self.assertAlmostEqual(model.inertia(data, labels), 4)
+
+    def test_class_raises_if_predict_before_fit(self):
+        with self.assertRaises(RuntimeError):
+            KMeans().predict([(0, 0)])
+
+    def test_class_predict_new_points(self):
+        model = KMeans(2, seed=42)
+        model.fit([(0, 0), (0, 2), (10, 10), (10, 12)])
+        self.assertEqual(model.predict([(1, 1), (11, 11)]), model.predict([(0, 0), (10, 10)]))
 
     def assert_consistent(self, data, result):
         self.assertEqual(len(result.labels), len(data))
