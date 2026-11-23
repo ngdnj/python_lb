@@ -5,7 +5,7 @@ import io
 import math
 import random
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import FrozenInstanceError
 from unittest.mock import patch
 
@@ -55,6 +55,52 @@ class KMeansTests(unittest.TestCase):
         model = KMeans(2, seed=42)
         model.fit([(0, 0), (0, 2), (10, 10), (10, 12)])
         self.assertEqual(model.predict([(1, 1), (11, 11)]), model.predict([(0, 0), (10, 10)]))
+
+    def test_class_finds_three_generated_clusters(self):
+        data, expected = make_blobs(
+            [(-20, -20), (0, 20), (20, -20)],
+            samples_per_cluster=30,
+            std=0.2,
+            seed=13,
+        )
+        model = KMeans(n_clusters=3, seed=7)
+        labels = model.fit(data)
+        self.assertEqual(partition(labels), partition(expected))
+        self.assertEqual(len(model.cluster_centers_), 3)
+
+    def test_class_seed_reproducibility(self):
+        data, _ = make_blobs([(0, 0), (10, 10), (20, 0)], seed=19)
+        first = KMeans(n_clusters=3, seed=42)
+        second = KMeans(n_clusters=3, seed=42)
+        self.assertEqual(first.fit(data), second.fit(data))
+        self.assertEqual(first.cluster_centers_, second.cluster_centers_)
+        self.assertEqual(first.inertia_, second.inertia_)
+
+    def test_class_different_k_returns_different_cluster_counts(self):
+        data, _ = make_blobs([(0, 0), (10, 10), (20, 0)], seed=23)
+        one = KMeans(n_clusters=1, seed=5)
+        three = KMeans(n_clusters=3, seed=5)
+        one.fit(data)
+        three.fit(data)
+        self.assertEqual(len(one.cluster_centers_), 1)
+        self.assertEqual(len(three.cluster_centers_), 3)
+
+    def test_class_inertia_does_not_increase_with_more_iterations(self):
+        data, _ = make_blobs([(0, 0), (3, 3), (8, 0)], std=1.5, seed=31)
+        objectives = []
+        for max_iter in (1, 2, 3, 10, 100):
+            model = KMeans(n_clusters=3, max_iter=max_iter, seed=11)
+            model.fit(data)
+            objectives.append(model.inertia_)
+        self.assertTrue(all(a >= b - 1e-10
+                            for a, b in zip(objectives, objectives[1:])))
+
+    def test_cli_rejects_fewer_samples_than_clusters(self):
+        error = io.StringIO()
+        with redirect_stderr(error), self.assertRaises(SystemExit) as raised:
+            main(["--samples", "2", "--k", "3"])
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("--samples должно быть не меньше --k", error.getvalue())
 
     def assert_consistent(self, data, result):
         self.assertEqual(len(result.labels), len(data))

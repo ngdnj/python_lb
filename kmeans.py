@@ -1,5 +1,3 @@
-"""Учебная реализация метода k-средних без сторонних зависимостей."""
-
 from __future__ import annotations
 
 import math
@@ -274,7 +272,7 @@ def plot_clusters(X, labels, centers, *, title="Кластеры k-средни�
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Кластеризация методом k-средних")
-    parser.add_argument("--samples", type=int, default=300, help="точек на кластер")
+    parser.add_argument("--samples", type=int, default=300, help="общее число точек")
     parser.add_argument("--k", type=int, default=3, help="число кластеров")
     parser.add_argument("--iter", type=int, default=100, dest="max_iter")
     parser.add_argument("--seed", type=int, default=42)
@@ -282,6 +280,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.samples < 1 or args.k < 1 or args.max_iter < 1:
         parser.error("--samples, --k и --iter должны быть положительными")
+    if args.samples < args.k:
+        parser.error("--samples должно быть не меньше --k: каждому кластеру нужна точка")
     centers = [(-5, -5), (0, 5), (5, -5), (-10, 5), (10, 5), (0, -10),
                (-10, -10), (10, 10), (15, 0), (-15, 0)]
     if args.k > len(centers):

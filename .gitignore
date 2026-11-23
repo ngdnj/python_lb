@@ -1,0 +1,7 @@
+# Ignore everything by default; keep only the project files requested.
+/*
+!/kmeans.py
+!/requirements.txt
+!/test_kmeans.py
+!/.gitignore
+!/README.md
